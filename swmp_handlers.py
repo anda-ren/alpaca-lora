@@ -2,7 +2,7 @@ import os
 from finetune import train
 from generate import init_model, evaluate
 from transformers import LlamaForCausalLM, LlamaTokenizer
-from starwhale import evaluation, pass_context, Context, dataset
+from starwhale import evaluation, pass_context, Context, dataset, handler
 from starwhale.api import model, experiment
 from starwhale.api.service import api
 import gradio
@@ -15,9 +15,13 @@ base_model = "decapoda-research/llama-7b-hf"
 
 @evaluation.predict
 def ppl(data: dict, **kw):
+    # import pdb; pdb.set_trace()
+    print(os.environ['CUDA_VISIBLE_DEVICES'])
     instruction = data["instruction"]
     init_model(base_model=str(ROOTDIR/"models"), lora_weights=str(ROOTDIR/"lora-alpaca") if os.path.exists(ROOTDIR/"lora-alpaca") else "tloen/alpaca-lora-7b")
-    return " ".join(evaluate(instruction=instruction))
+    response = " ".join(evaluate(instruction=instruction))
+    print(response)
+    return response
 
 
 @experiment.fine_tune()
@@ -47,6 +51,23 @@ def fine_tune() -> None:
 def online_eval(question: str) -> str:
     return ppl({"instruction": question})
 
+@handler(expose=7860)
+def chat():
+    import gradio as gr
+    with gr.Blocks() as demo:
+        chatbot = gr.Chatbot()
+        msg = gr.Textbox()
+        clear = gr.ClearButton([msg, chatbot])
+
+        def respond(message, chat_history):
+            response = ppl({"instruction": message})
+            chat_history.append((message, response))
+            return "", chat_history
+
+        msg.submit(respond, [msg, chatbot], [msg, chatbot])
+
+    demo.launch(server_name="0.0.0.0")
+
 
 if not os.path.exists(ROOTDIR/"models"):
     hgmodel = LlamaForCausalLM.from_pretrained(
@@ -67,6 +88,3 @@ def build_package(ROOTDIR):
     name="llama-7b-hf",
     modules=[ppl, fine_tune, online_eval],
 )
-
-if __name__ == "__main__":
-    build_package(ROOTDIR)
